@@ -24,14 +24,14 @@ st.markdown(
         color: #f5f5f5;
     }
     header, .css-18ni7ap.e8zbici2 {
-        background-color: #000000 !important;
+        background-color: #ffffff !important;
     }
     .block-container {
         padding-top: 1.5rem;
         padding-bottom: 1.5rem;
     }
     .stMetric {
-        background: #1f1f1f;
+        background: #f7f7f7;
         padding: 1rem;
         border-radius: 0.8rem;
         border: 1px solid #FFD10020;
