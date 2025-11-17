@@ -20,7 +20,7 @@ st.markdown(
     """
     <style>
     .main {
-        background-color: #111111;
+        background-color: #ffffff;
         color: #f5f5f5;
     }
     header, .css-18ni7ap.e8zbici2 {
