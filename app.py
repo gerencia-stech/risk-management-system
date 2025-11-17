@@ -281,14 +281,83 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
     total_bajo = (df["Categoría Riesgo"] == "Bajo").sum()
 
     col1, col2, col3, col4 = st.columns(4)
+
+    # Bloque total (neutral)
     with col1:
-        st.metric("Total de Riesgos", total_riesgos)
+        st.markdown(
+            f"""
+            <div style="
+                background-color:#1f1f1f;
+                padding:1rem;
+                border-radius:0.8rem;
+                border:1px solid #FFD10020;
+                text-align:center;
+            ">
+                <div style="font-size:0.9rem;font-weight:600;">Total de Riesgos</div>
+                <div style="font-size:1.8rem;font-weight:800;">{total_riesgos}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # Riesgos Altos – rojo
     with col2:
-        st.metric("Riesgos Altos", total_alto)
+        bg_alto = "#b71c1c" if total_alto > 0 else "#3a3a3a"
+        st.markdown(
+            f"""
+            <div style="
+                background-color:{bg_alto};
+                padding:1rem;
+                border-radius:0.8rem;
+                border:1px solid #FFD10040;
+                text-align:center;
+            ">
+                <div style="font-size:0.9rem;font-weight:600;">Riesgos Altos</div>
+                <div style="font-size:1.8rem;font-weight:800;">{total_alto}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # Riesgos Medios – amarillo
     with col3:
-        st.metric("Riesgos Medios", total_medio)
+        bg_medio = "#FFD100" if total_medio > 0 else "#4a4a1f"
+        texto_medio_color = "#000000" if total_medio > 0 else "#f5f5f5"
+        st.markdown(
+            f"""
+            <div style="
+                background-color:{bg_medio};
+                padding:1rem;
+                border-radius:0.8rem;
+                border:1px solid #FFD10060;
+                text-align:center;
+                color:{texto_medio_color};
+            ">
+                <div style="font-size:0.9rem;font-weight:600;">Riesgos Medios</div>
+                <div style="font-size:1.8rem;font-weight:800;">{total_medio}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # Riesgos Bajos – verde
     with col4:
-        st.metric("Riesgos Bajos", total_bajo)
+        bg_bajo = "#1b5e20" if total_bajo > 0 else "#2f4f2f"
+        st.markdown(
+            f"""
+            <div style="
+                background-color:{bg_bajo};
+                padding:1rem;
+                border-radius:0.8rem;
+                border:1px solid #00e67640;
+                text-align:center;
+            ">
+                <div style="font-size:0.9rem;font-weight:600;">Riesgos Bajos</div>
+                <div style="font-size:1.8rem;font-weight:800;">{total_bajo}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     st.markdown("---")
 
@@ -313,13 +382,13 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_sequence=["#FFD100"]
             )
             fig_bar.update_layout(
-                plot_bgcolor="#f7f7f7",
-                paper_bgcolor="#f7f7f7",
+                plot_bgcolor="#111111",
+                paper_bgcolor="#111111",
                 font_color="#f5f5f5",
                 xaxis_title="Área",
                 yaxis_title="Número de riesgos"
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, width='stretch')
         else:
             st.write("Sin datos de Área para mostrar.")
 
@@ -334,9 +403,9 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 .reset_index(name="Total")
             )
             color_map = {
-                "Alto": "#ff2700",
-                "Medio": "#FFEE00",
-                "Bajo": "#11852A",
+                "Alto": "#b71c1c",
+                "Medio": "#FFD100",
+                "Bajo": "#1b5e20",
                 "Sin dato": "#4d4d4d"
             }
             fig_pie = px.pie(
@@ -348,8 +417,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_map=color_map
             )
             fig_pie.update_layout(
-                plot_bgcolor="#F7F7F7",
-                paper_bgcolor="#F7F7F7",
+                plot_bgcolor="#111111",
+                paper_bgcolor="#111111",
                 font_color="#f5f5f5",
             )
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -379,8 +448,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                     title=f"{titulo_prefix}Tendencia de aparición de riesgos"
                 )
                 fig_line.update_layout(
-                    plot_bgcolor="#F7F7F7",
-                    paper_bgcolor="#F7F7F7",
+                    plot_bgcolor="#111111",
+                    paper_bgcolor="#111111",
                     font_color="#f5f5f5",
                     xaxis_title="Fecha",
                     yaxis_title="Número de riesgos"
@@ -395,8 +464,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
 
     # Tabla
     st.subheader(f"📋 {titulo_prefix}Tabla de riesgos")
-    st.dataframe(df, use_container_width=True, height=400)
-
+    st.dataframe(df, width='stretch', height=400)
 
 def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
     """
@@ -710,7 +778,7 @@ elif vista == "Formulario en tiempo real":
 # ----------------------------------------
 elif vista == "Gestión y actualización":
     st.title("🛠 Gestión y actualización de riesgos")
-    st.caption("Edita el estado, responsable, controles y atributos clave de los riesgos existentes.")
+    st.caption("Edita el estado, área, responsable, controles y atributos clave de los riesgos existentes.")
 
     bd = cargar_bd()
 
@@ -781,6 +849,7 @@ elif vista == "Gestión y actualización":
             with st.form("form_update_riesgo"):
                 col_u1, col_u2 = st.columns(2)
                 with col_u1:
+                    nueva_area = st.text_input("Área", value=riesgo_row["Área"] or "")
                     nuevo_responsable = st.text_input("Responsable", value=riesgo_row["Responsable"] or "")
                     nuevo_estado = st.selectbox(
                         "Estado",
@@ -811,14 +880,23 @@ elif vista == "Gestión y actualización":
                     conn.execute(
                         f"""
                         UPDATE {TABLE_NAME}
-                        SET "Responsable" = ?,
+                        SET "Área" = ?,
+                            "Responsable" = ?,
                             "Estado" = ?,
                             "Criticidad" = ?,
                             "Control" = ?,
                             "Observaciones" = ?
                         WHERE id = ?;
                         """,
-                        (nuevo_responsable, nuevo_estado, nueva_criticidad, nuevo_control, nuevas_obs, int(riesgo_id))
+                        (
+                            nueva_area,
+                            nuevo_responsable,
+                            nuevo_estado,
+                            nueva_criticidad,
+                            nuevo_control,
+                            nuevas_obs,
+                            int(riesgo_id)
+                        )
                     )
                     conn.commit()
                 limpiar_cache_bd()
@@ -904,3 +982,4 @@ else:  # vista == "Planes de tratamiento"
                 st.info("Este riesgo aún no tiene planes de tratamiento registrados.")
             else:
                 st.dataframe(df_planes_riesgo, use_container_width=True, height=300)
+
