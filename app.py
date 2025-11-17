@@ -348,8 +348,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_map=color_map
             )
             fig_pie.update_layout(
-                plot_bgcolor="#111111",
-                paper_bgcolor="#111111",
+                plot_bgcolor="#F7F7F7",
+                paper_bgcolor="#F7F7F7",
                 font_color="#f5f5f5",
             )
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -379,8 +379,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                     title=f"{titulo_prefix}Tendencia de aparición de riesgos"
                 )
                 fig_line.update_layout(
-                    plot_bgcolor="#111111",
-                    paper_bgcolor="#111111",
+                    plot_bgcolor="#F7F7F7",
+                    paper_bgcolor="#F7F7F7",
                     font_color="#f5f5f5",
                     xaxis_title="Fecha",
                     yaxis_title="Número de riesgos"
