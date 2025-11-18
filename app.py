@@ -426,6 +426,50 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
         else:
             st.write("Sin datos de categoría para mostrar.")
 
+    # 🔥 Matriz de calor Probabilidad x Consecuencia
+    st.subheader(f"🧱 {titulo_prefix}Matriz de calor Probabilidad x Consecuencia")
+    if "Probabilidad" in df.columns and "Consecuencia" in df.columns:
+        df_pc = df.copy()
+        df_pc["Probabilidad"] = pd.to_numeric(df_pc["Probabilidad"], errors="coerce")
+        df_pc["Consecuencia"] = pd.to_numeric(df_pc["Consecuencia"], errors="coerce")
+        df_pc = df_pc.dropna(subset=["Probabilidad", "Consecuencia"])
+
+        if df_pc.empty:
+            st.info("No hay datos suficientes para construir la matriz de calor.")
+        else:
+            tabla = (
+                df_pc
+                .groupby(["Probabilidad", "Consecuencia"])
+                .size()
+                .reset_index(name="Total")
+            )
+            matriz = tabla.pivot(
+                index="Probabilidad",
+                columns="Consecuencia",
+                values="Total"
+            ).fillna(0)
+
+            matriz = matriz.sort_index().sort_index(axis=1)
+
+            fig_heat = px.imshow(
+                matriz,
+                text_auto=True,
+                aspect="auto",
+                color_continuous_scale="YlOrRd",
+                labels={"color": "N° riesgos"},
+                title=f"{titulo_prefix}Matriz de calor P x C"
+            )
+            fig_heat.update_layout(
+                plot_bgcolor="#FFFFFF",
+                paper_bgcolor="#FFFFFF",
+                font_color="#000000",
+                xaxis_title="Consecuencia",
+                yaxis_title="Probabilidad"
+            )
+            st.plotly_chart(fig_heat, width='stretch')
+    else:
+        st.info("La base no tiene columnas 'Probabilidad' y 'Consecuencia' para construir la matriz de calor.")
+
     # Tendencias en el tiempo usando columna Fecha
     if "Fecha" in df.columns and df["Fecha"].notna().any():
         df_fecha = df.copy()
@@ -466,7 +510,6 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
     # Tabla
     st.subheader(f"📋 {titulo_prefix}Tabla de riesgos")
     st.dataframe(df, width='stretch', height=400)
-
 
 def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
     """
@@ -600,9 +643,12 @@ with st.sidebar:
 # ----------------------------------------
 if vista == "Dashboard de la base de datos":
     st.title("⚠️ Dashboard de Riesgos")
-    st.caption("Analítica sobre una sola base de datos integrada (archivo + formulario), lista para Power BI / BI corporativo.")
+    st.caption(
+        "Analítica sobre la base de datos global de riesgos (SQLite). "
+        "Los archivos y el formulario solo alimentan esta base; todo lo que ves aquí viene de la BD global."
+    )
 
-    # Carga de archivo e integración
+    # --- Carga de archivo e integración a la BD global (no visualización directa) ---
     with st.sidebar:
         st.markdown("---")
         st.header("📂 Carga e integración de archivo")
@@ -622,21 +668,21 @@ if vista == "Dashboard de la base de datos":
         file_bytes = uploaded_file.getvalue()
         integrar_archivo_a_bd(file_bytes, uploaded_file.name)
 
-    # Filtros y analítica
-    bd = cargar_bd()
+    # --- SIEMPRE trabajamos sobre la base de datos global ---
+    bd_global = cargar_bd()
 
     with st.sidebar:
         st.markdown("---")
-        st.header("🎛️ Filtros sobre la base de datos")
-        if bd.empty:
+        st.header("🎛️ Filtros sobre la base de datos global")
+        if bd_global.empty:
             st.info("Aún no hay datos en la base de datos global.")
             filter_area = filter_resp = filter_cat = filter_origen = []
             search_text = ""
         else:
-            areas = sorted(bd["Área"].dropna().unique().tolist())
-            responsables = sorted(bd["Responsable"].dropna().unique().tolist())
-            categorias = sorted(bd["Categoría Riesgo"].dropna().unique().tolist())
-            origenes = sorted(bd["Origen"].dropna().unique().tolist())
+            areas = sorted(bd_global["Área"].dropna().unique().tolist())
+            responsables = sorted(bd_global["Responsable"].dropna().unique().tolist())
+            categorias = sorted(bd_global["Categoría Riesgo"].dropna().unique().tolist())
+            origenes = sorted(bd_global["Origen"].dropna().unique().tolist())
 
             filter_area = st.multiselect("Filtrar por Área", options=areas, default=areas)
             filter_resp = st.multiselect("Filtrar por Responsable", options=responsables, default=responsables)
@@ -644,13 +690,15 @@ if vista == "Dashboard de la base de datos":
             filter_origen = st.multiselect("Filtrar por Origen", options=origenes, default=origenes)
             search_text = st.text_input("🔍 Buscar (Riesgo / Control)", "")
 
-    st.markdown("### 📚 Base de datos integrada de riesgos")
+    st.markdown("### 📚 Base de datos global de riesgos")
 
-    if bd.empty:
+    if bd_global.empty:
         st.info("No hay registros aún. Carga un archivo o registra riesgos en el formulario.")
     else:
-        df_filtrado = bd.copy()
+        # Partimos SIEMPRE de la BD global
+        df_filtrado = bd_global.copy()
 
+        # Filtros
         if filter_area:
             df_filtrado = df_filtrado[df_filtrado["Área"].isin(filter_area)]
         if filter_resp:
@@ -667,8 +715,10 @@ if vista == "Dashboard de la base de datos":
             )
             df_filtrado = df_filtrado[mask]
 
-        calcular_kpis_y_graficos(df_filtrado, col_area="Área", titulo_prefix="BD Integrada - ")
+        # Dashboard siempre sobre la BD global filtrada
+        calcular_kpis_y_graficos(df_filtrado, col_area="Área", titulo_prefix="BD Global - ")
 
+        # Export general
         st.markdown("### 📤 Exportar datos filtrados para Power BI / Excel")
         csv_data = df_filtrado.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
@@ -677,6 +727,22 @@ if vista == "Dashboard de la base de datos":
             file_name="matriz_riesgos_bd_filtrada.csv",
             mime="text/csv"
         )
+
+        # Export directo de Riesgos Altos (sobre la BD global filtrada)
+        df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
+
+        st.markdown("### 🚨 Exportar solo Riesgos Altos")
+
+        if df_altos.empty:
+            st.info("No hay riesgos altos en el filtro actual.")
+        else:
+            csv_altos = df_altos.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="💾 Descargar solo Riesgos Altos (CSV)",
+                data=csv_altos,
+                file_name="matriz_riesgos_altos_filtrada.csv",
+                mime="text/csv"
+            )
 
 # ----------------------------------------
 # VISTA 2: FORMULARIO EN TIEMPO REAL
@@ -768,12 +834,22 @@ elif vista == "Formulario en tiempo real":
 
         st.markdown("### 📤 Exportar base de datos completa a Power BI / Excel")
         csv_bd = bd.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            label="💾 Descargar base de datos completa CSV",
-            data=csv_bd,
-            file_name="matriz_riesgos_bd_global.csv",
-            mime="text/csv"
-        )
+
+    # Export directo de Riesgos Altos (sobre el filtro aplicado)
+        df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
+
+        st.markdown("### 🚨 Exportar solo Riesgos Altos")
+
+        if df_altos.empty:
+            st.info("No hay riesgos altos en el filtro actual.")
+        else:
+            csv_altos = df_altos.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="💾 Descargar solo Riesgos Altos (CSV)",
+                data=csv_altos,
+                file_name="matriz_riesgos_altos_filtrada.csv",
+                mime="text/csv"
+            )
 
 # ----------------------------------------
 # VISTA 3: GESTIÓN Y ACTUALIZACIÓN
