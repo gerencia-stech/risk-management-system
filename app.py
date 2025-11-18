@@ -15,13 +15,13 @@ st.set_page_config(
     page_icon="⚠️"
 )
 
-# Estilos personalizados (negro, gris, amarillo)
+# Estilos personalizados (blanco, gris, amarillo)
 st.markdown(
     """
     <style>
     .main {
         background-color: #ffffff;
-        color: #f5f5f5;
+        color: #000000;
     }
     header, .css-18ni7ap.e8zbici2 {
         background-color: #ffffff !important;
@@ -321,8 +321,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
 
     # Riesgos Medios – amarillo
     with col3:
-        bg_medio = "#FFD100" if total_medio > 0 else "#4a4a1f"
-        texto_medio_color = "#000000" if total_medio > 0 else "#f5f5f5"
+        bg_medio = "#FFD100" if total_medio > 0 else "#d1b800"
+        texto_medio_color = "#000000"
         st.markdown(
             f"""
             <div style="
@@ -351,6 +351,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 border-radius:0.8rem;
                 border:1px solid #00e67640;
                 text-align:center;
+                color:#ffffff;
             ">
                 <div style="font-size:0.9rem;font-weight:600;">Riesgos Bajos</div>
                 <div style="font-size:1.8rem;font-weight:800;">{total_bajo}</div>
@@ -382,9 +383,9 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_sequence=["#FFD100"]
             )
             fig_bar.update_layout(
-                plot_bgcolor="#f7f7f7",
-                paper_bgcolor="#f7f7f7",
-                font_color="#f5f5f5",
+                plot_bgcolor="#FFFFFF",
+                paper_bgcolor="#FFFFFF",
+                font_color="#000000",
                 xaxis_title="Área",
                 yaxis_title="Número de riesgos"
             )
@@ -417,11 +418,11 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_map=color_map
             )
             fig_pie.update_layout(
-                plot_bgcolor="#f7f7f7",
-                paper_bgcolor="#f7f7f7",
-                font_color="#f5f5f5",
+                plot_bgcolor="#FFFFFF",
+                paper_bgcolor="#FFFFFF",
+                font_color="#000000",
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width='stretch')
         else:
             st.write("Sin datos de categoría para mostrar.")
 
@@ -448,13 +449,13 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                     title=f"{titulo_prefix}Tendencia de aparición de riesgos"
                 )
                 fig_line.update_layout(
-                    plot_bgcolor="#f7f7f7",
-                    paper_bgcolor="#f7f7f7",
-                    font_color="#f5f5f5",
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="#FFFFFF",
+                    font_color="#000000",
                     xaxis_title="Fecha",
                     yaxis_title="Número de riesgos"
                 )
-                st.plotly_chart(fig_line, use_container_width=True)
+                st.plotly_chart(fig_line, width='stretch')
         except Exception:
             st.info("No fue posible procesar la columna Fecha para tendencias.")
     else:
@@ -465,6 +466,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
     # Tabla
     st.subheader(f"📋 {titulo_prefix}Tabla de riesgos")
     st.dataframe(df, width='stretch', height=400)
+
 
 def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
     """
@@ -497,7 +499,7 @@ def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
             "`Probabilidad`, `Consecuencia`, `Área`, `Responsable`, `Control` en alguna de las primeras filas."
         )
         st.write("Primeras filas detectadas:")
-        st.dataframe(df_raw.head(10))
+        st.dataframe(df_raw.head(10), width='stretch')
         return
 
     header_row = df_raw.iloc[fila_header].astype(str).str.strip()
@@ -981,5 +983,4 @@ else:  # vista == "Planes de tratamiento"
             if df_planes_riesgo.empty:
                 st.info("Este riesgo aún no tiene planes de tratamiento registrados.")
             else:
-                st.dataframe(df_planes_riesgo, use_container_width=True, height=300)
-
+                st.dataframe(df_planes_riesgo, width='stretch', height=300)
