@@ -287,7 +287,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
         st.markdown(
             f"""
             <div style="
-                background-color:#1f1f1f;
+                background-color:#f7f7f7;
                 padding:1rem;
                 border-radius:0.8rem;
                 border:1px solid #FFD10020;
@@ -382,8 +382,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_sequence=["#FFD100"]
             )
             fig_bar.update_layout(
-                plot_bgcolor="#111111",
-                paper_bgcolor="#111111",
+                plot_bgcolor="#f7f7f7",
+                paper_bgcolor="#f7f7f7",
                 font_color="#f5f5f5",
                 xaxis_title="Área",
                 yaxis_title="Número de riesgos"
@@ -417,8 +417,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 color_discrete_map=color_map
             )
             fig_pie.update_layout(
-                plot_bgcolor="#111111",
-                paper_bgcolor="#111111",
+                plot_bgcolor="#f7f7f7",
+                paper_bgcolor="#f7f7f7",
                 font_color="#f5f5f5",
             )
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -448,8 +448,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                     title=f"{titulo_prefix}Tendencia de aparición de riesgos"
                 )
                 fig_line.update_layout(
-                    plot_bgcolor="#111111",
-                    paper_bgcolor="#111111",
+                    plot_bgcolor="#f7f7f7",
+                    paper_bgcolor="#f7f7f7",
                     font_color="#f5f5f5",
                     xaxis_title="Fecha",
                     yaxis_title="Número de riesgos"
