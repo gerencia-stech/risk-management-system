@@ -512,24 +512,19 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
         else:
             st.write("Sin datos de categoría para mostrar.")
 
-    # 🔥 Matriz de calor Probabilidad x Consecuencia (1–5) con riesgos por celda
+        # 🔥 Matriz de calor Probabilidad x Consecuencia (1–5) con riesgos por celda
     st.subheader(f"🧱 {titulo_prefix}Matriz de calor Probabilidad x Consecuencia")
 
     if "Probabilidad" in df.columns and "Consecuencia" in df.columns:
-        # Copia y normalización
+
         df_pc = df.copy()
         df_pc["Probabilidad"] = pd.to_numeric(df_pc["Probabilidad"], errors="coerce")
         df_pc["Consecuencia"] = pd.to_numeric(df_pc["Consecuencia"], errors="coerce")
         df_pc = df_pc.dropna(subset=["Probabilidad", "Consecuencia"])
 
-        # Rango estándar 1–5 en ambos ejes
         probs = range(1, 6)
         consec = range(1, 6)
 
-        # Matrices:
-        # - matriz_cat_val: 1 = Bajo, 2 = Medio, 3 = Alto (para color)
-        # - matriz_text: texto a mostrar en cada celda (P×C y nº de riesgos)
-        # - matriz_hover: texto detallado con nombres de riesgos
         matriz_cat_val = []
         matriz_text = []
         matriz_hover = []
@@ -542,9 +537,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
             fila_hover = []
             for c in consec:
                 prod = int(p * c)
-                nivel = categorizar_riesgo(prod)  # Bajo / Medio / Alto
+                nivel = categorizar_riesgo(prod)
 
-                # Riesgos que caen exactamente en esta combinación P,C
                 riesgos_match = df_pc[
                     (df_pc["Probabilidad"] == p) &
                     (df_pc["Consecuencia"] == c)
@@ -557,7 +551,6 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                     .tolist()
                 )
 
-                # Texto visible en la celda: "P×C (nR)" si hay riesgos, solo "P×C" si no
                 if lista_riesgos:
                     cell_text = f"{prod} ({len(lista_riesgos)}R)"
                     resumen = "; ".join(lista_riesgos[:3])
@@ -583,17 +576,16 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
             matriz_text.append(fila_text)
             matriz_hover.append(fila_hover)
 
-               fig_heat = px.imshow(
+        fig_heat = px.imshow(
             matriz_cat_val,
             x=list(consec),
             y=list(probs),
-            origin="lower",  # 👈 clave: hace que 1 quede en la esquina inferior izquierda
+            origin="lower",  # 👈 Asegura que el 1 quede abajo
             aspect="auto",
             labels={"x": "Consecuencia", "y": "Probabilidad", "color": "Nivel"},
             title=f"{titulo_prefix}Matriz de calor P × C (1–5)"
         )
 
-        # Colores: Bajo = verde, Medio = amarillo, Alto = rojo
         colorscale = [
             (0.0, "#1b5e20"),   # Bajo - verde
             (1/3, "#1b5e20"),
@@ -629,15 +621,21 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
             )
         )
 
-        # Aseguramos que los ejes muestren 1–5 de forma clara
-        fig_heat.update_xaxes(type="linear", tickmode="array", tickvals=[1, 2, 3, 4, 5])
-        fig_heat.update_yaxes(type="linear", tickmode="array", tickvals=[1, 2, 3, 4, 5])
+        fig_heat.update_xaxes(
+            tickmode="array",
+            tickvals=[1, 2, 3, 4, 5]
+        )
+
+        fig_heat.update_yaxes(
+            tickmode="array",
+            tickvals=[1, 2, 3, 4, 5]
+        )
 
         st.plotly_chart(fig_heat, width='stretch')
 
-
     else:
         st.info("La base no tiene columnas 'Probabilidad' y 'Consecuencia' para construir la matriz de calor.")
+
 
     # Tendencias en el tiempo usando columna Fecha
     if "Fecha" in df.columns and df["Fecha"].notna().any():
