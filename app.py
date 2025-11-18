@@ -462,7 +462,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
         df_pc = df_pc.dropna(subset=["Probabilidad", "Consecuencia"])
 
         # Rango estándar 1–5 en ambos ejes
-        probs = range(6, 1)
+        probs = range(1, 6)
         consec = range(1, 6)
 
         # Matrices:
