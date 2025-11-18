@@ -715,10 +715,10 @@ if vista == "Dashboard de la base de datos":
             )
             df_filtrado = df_filtrado[mask]
 
-        # Dashboard siempre sobre la BD global filtrada
+        # 🎯 DASHBOARD sobre df_filtrado (BD global filtrada)
         calcular_kpis_y_graficos(df_filtrado, col_area="Área", titulo_prefix="BD Global - ")
 
-        # Export general
+        # --- Export general ---
         st.markdown("### 📤 Exportar datos filtrados para Power BI / Excel")
         csv_data = df_filtrado.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
@@ -727,6 +727,22 @@ if vista == "Dashboard de la base de datos":
             file_name="matriz_riesgos_bd_filtrada.csv",
             mime="text/csv"
         )
+
+        # --- Export directo de Riesgos Altos ---
+        st.markdown("### 🚨 Exportar solo Riesgos Altos")
+
+        df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
+
+        if df_altos.empty:
+            st.info("No hay riesgos altos en el filtro actual.")
+        else:
+            csv_altos = df_altos.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="💾 Descargar solo Riesgos Altos (CSV)",
+                data=csv_altos,
+                file_name="matriz_riesgos_altos_filtrada.csv",
+                mime="text/csv"
+            )
 
         # Export directo de Riesgos Altos (sobre la BD global filtrada)
         df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
@@ -742,7 +758,7 @@ if vista == "Dashboard de la base de datos":
                 data=csv_altos,
                 file_name="matriz_riesgos_altos_filtrada.csv",
                 mime="text/csv"
-            )
+    )
 
 # ----------------------------------------
 # VISTA 2: FORMULARIO EN TIEMPO REAL
@@ -1060,3 +1076,4 @@ else:  # vista == "Planes de tratamiento"
                 st.info("Este riesgo aún no tiene planes de tratamiento registrados.")
             else:
                 st.dataframe(df_planes_riesgo, width='stretch', height=300)
+
