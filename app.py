@@ -534,7 +534,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
 
     # Tabla
     st.subheader(f"📋 {titulo_prefix}Tabla de riesgos")
-    st.dataframe(df, width=None, height=400)
+    st.dataframe(df, width='content', height=400)
 
 
 def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
