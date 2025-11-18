@@ -5,6 +5,8 @@ from datetime import date
 import sqlite3
 import hashlib
 import io
+import traceback
+from typing import Optional, Tuple
 
 # ================================
 # CONFIGURACIÓN INICIAL DE LA APP
@@ -48,7 +50,12 @@ TABLE_NAME = "riesgos"
 # UTILIDADES DE BASE DE DATOS
 # ======================
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    """
+    Conexión a SQLite. check_same_thread=False para evitar errores con Streamlit y caching.
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def init_db():
@@ -117,7 +124,7 @@ def init_db():
 
 
 @st.cache_data
-def cargar_bd():
+def cargar_bd() -> pd.DataFrame:
     """
     Carga TODA la base de datos de riesgos desde SQLite.
     Si no hay datos, retorna un DF vacío con la estructura estándar.
@@ -138,6 +145,7 @@ def cargar_bd():
         df = df[columnas]
         return df
     except Exception:
+        # Si falla la lectura, devolver DF vacío con columnas
         return pd.DataFrame(columns=columnas)
 
 
@@ -147,15 +155,19 @@ def limpiar_cache_bd():
 
 def insertar_df_en_bd(df_bd: pd.DataFrame):
     """Inserta un DataFrame con las columnas de la matriz en la tabla riesgos."""
-    if df_bd.empty:
+    if df_bd is None or df_bd.empty:
         return
-    with get_connection() as conn:
-        df_bd.to_sql(TABLE_NAME, conn, if_exists="append", index=False)
-        conn.commit()
-    limpiar_cache_bd()
+    try:
+        with get_connection() as conn:
+            df_bd.to_sql(TABLE_NAME, conn, if_exists="append", index=False)
+            conn.commit()
+        limpiar_cache_bd()
+    except Exception as e:
+        st.error("Error al insertar registros en la base de datos.")
+        st.exception(e)
 
 
-def cargar_planes():
+def cargar_planes() -> pd.DataFrame:
     try:
         with get_connection() as conn:
             df = pd.read_sql("SELECT * FROM planes_tratamiento", conn)
@@ -169,23 +181,27 @@ def cargar_planes():
 
 
 def insertar_plan(df_plan: pd.DataFrame):
-    if df_plan.empty:
+    if df_plan is None or df_plan.empty:
         return
-    with get_connection() as conn:
-        df_plan.to_sql("planes_tratamiento", conn, if_exists="append", index=False)
-        conn.commit()
+    try:
+        with get_connection() as conn:
+            df_plan.to_sql("planes_tratamiento", conn, if_exists="append", index=False)
+            conn.commit()
+    except Exception as e:
+        st.error("Error al insertar plan de tratamiento.")
+        st.exception(e)
 
 
 # ======================
 # FUNCIONES AUXILIARES DE RIESGO
 # ======================
-def get_column(df, target_name):
+def get_column(df: pd.DataFrame, target_name: str) -> Optional[str]:
     """Devuelve el nombre real de la columna en el DataFrame, buscando por coincidencia en minúsculas."""
     cols_lower = {c.lower(): c for c in df.columns}
     return cols_lower.get(target_name.lower())
 
 
-def calcular_nivel_riesgo(df, col_prob, col_cons, col_nivel=None):
+def calcular_nivel_riesgo(df: pd.DataFrame, col_prob: str, col_cons: str, col_nivel: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
     """Calcula o recalcula el Nivel de Riesgo = Probabilidad x Consecuencia."""
     if col_nivel is None or col_nivel not in df.columns:
         df["Nivel de Riesgo"] = df[col_prob] * df[col_cons]
@@ -217,12 +233,11 @@ def categorizar_riesgo(valor):
         return "Sin dato"
 
 
-def detectar_columna_fecha(df):
+def detectar_columna_fecha(df: pd.DataFrame) -> Tuple[Optional[str], pd.DataFrame]:
     """Intenta detectar automáticamente una columna de fecha."""
-    candidatos_preferidos = ["fecha", "fecha evento", "date", "fecha_riesgo"]
+    # Preferencias por nombres
     cols_lower = {c.lower(): c for c in df.columns}
-
-    for cand in candidatos_preferidos:
+    for cand in ["fecha", "fecha evento", "date", "fecha_riesgo", "fecha de riesgo"]:
         if cand in cols_lower:
             col = cols_lower[cand]
             try:
@@ -232,13 +247,23 @@ def detectar_columna_fecha(df):
             except Exception:
                 pass
 
-    datetime_cols = [
-        c for c in df.columns
-        if pd.api.types.is_datetime64_any_dtype(df[c])
-    ]
+    # Buscar cualquier columna que contenga la palabra 'fecha'
+    for c in df.columns:
+        if "fecha" in c.lower():
+            try:
+                converted = pd.to_datetime(df[c], errors="coerce")
+                if converted.notna().sum() > 0:
+                    df[c] = converted
+                    return c, df
+            except Exception:
+                continue
+
+    # Columnas que ya son datetime
+    datetime_cols = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
     if datetime_cols:
         return datetime_cols[0], df
 
+    # Intentar convertir columnas objeto
     for c in df.columns:
         if df[c].dtype == object:
             try:
@@ -252,7 +277,7 @@ def detectar_columna_fecha(df):
     return None, df
 
 
-def detectar_fila_encabezado(df_raw, nombres_minimos, max_filas_busqueda=15):
+def detectar_fila_encabezado(df_raw: pd.DataFrame, nombres_minimos, max_filas_busqueda=15) -> Optional[int]:
     """
     Detecta la fila que parece ser el encabezado de la matriz,
     buscando al menos 3 coincidencias de nombres esperados.
@@ -268,17 +293,17 @@ def detectar_fila_encabezado(df_raw, nombres_minimos, max_filas_busqueda=15):
     return None
 
 
-def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
+def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_prefix: str = ""):
     """KPIs + gráficos + tabla a partir de un DataFrame de riesgos."""
-    if df.empty:
+    if df is None or df.empty:
         st.info("No hay datos para mostrar aún.")
         return
 
     # KPIs
     total_riesgos = len(df)
-    total_alto = (df["Categoría Riesgo"] == "Alto").sum()
-    total_medio = (df["Categoría Riesgo"] == "Medio").sum()
-    total_bajo = (df["Categoría Riesgo"] == "Bajo").sum()
+    total_alto = int((df["Categoría Riesgo"] == "Alto").sum())
+    total_medio = int((df["Categoría Riesgo"] == "Medio").sum())
+    total_bajo = int((df["Categoría Riesgo"] == "Bajo").sum())
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -312,8 +337,8 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 border:1px solid #FFD10040;
                 text-align:center;
             ">
-                <div style="font-size:0.9rem;font-weight:600;">Riesgos Altos</div>
-                <div style="font-size:1.8rem;font-weight:800;">{total_alto}</div>
+                <div style="font-size:0.9rem;font-weight:600;color:#ffffff">Riesgos Altos</div>
+                <div style="font-size:1.8rem;font-weight:800;color:#ffffff">{total_alto}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -389,7 +414,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 xaxis_title="Área",
                 yaxis_title="Número de riesgos"
             )
-            st.plotly_chart(fig_bar, width='stretch')
+            st.plotly_chart(fig_bar, use_container_width=True)
         else:
             st.write("Sin datos de Área para mostrar.")
 
@@ -422,7 +447,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 paper_bgcolor="#FFFFFF",
                 font_color="#000000",
             )
-            st.plotly_chart(fig_pie, width='stretch')
+            st.plotly_chart(fig_pie, use_container_width=True)
         else:
             st.write("Sin datos de categoría para mostrar.")
 
@@ -466,7 +491,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                 xaxis_title="Consecuencia",
                 yaxis_title="Probabilidad"
             )
-            st.plotly_chart(fig_heat, width='stretch')
+            st.plotly_chart(fig_heat, use_container_width=True)
     else:
         st.info("La base no tiene columnas 'Probabilidad' y 'Consecuencia' para construir la matriz de calor.")
 
@@ -499,7 +524,7 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
                     xaxis_title="Fecha",
                     yaxis_title="Número de riesgos"
                 )
-                st.plotly_chart(fig_line, width='stretch')
+                st.plotly_chart(fig_line, use_container_width=True)
         except Exception:
             st.info("No fue posible procesar la columna Fecha para tendencias.")
     else:
@@ -509,117 +534,126 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
 
     # Tabla
     st.subheader(f"📋 {titulo_prefix}Tabla de riesgos")
-    st.dataframe(df, width='stretch', height=400)
+    st.dataframe(df, width=None, height=400)
+
 
 def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
     """
     Lee un archivo (Excel/CSV), detecta encabezados, normaliza columnas
     y lo integra como registros en la base de datos global.
     Acepta encabezado 'Riesgo' o 'Peligro', pero lo mapea a 'Riesgo'.
+    Muestra mensajes claros al usuario y previene duplicados por hash.
     """
-    file_hash = hashlib.md5(file_bytes).hexdigest()
+    try:
+        file_hash = hashlib.md5(file_bytes).hexdigest()
 
-    # Verificar si ese hash ya existe en la BD
-    df_bd = cargar_bd()
-    if "FileHash" in df_bd.columns and not df_bd.empty:
-        if file_hash in df_bd["FileHash"].dropna().unique().tolist():
-            st.info("Este archivo ya fue integrado previamente a la base de datos global.")
+        # Verificar si ese hash ya existe en la BD
+        df_bd = cargar_bd()
+        if "FileHash" in df_bd.columns and not df_bd.empty:
+            if file_hash in df_bd["FileHash"].dropna().unique().tolist():
+                st.info("Este archivo ya fue integrado previamente a la base de datos global.")
+                return
+
+        # Leer sin encabezados
+        if filename.lower().endswith(".csv"):
+            df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
+        else:
+            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str)
+
+        nombres_minimos = ["Riesgo", "Peligro", "Probabilidad", "Consecuencia", "Área", "Area", "Responsable", "Control"]
+        fila_header = detectar_fila_encabezado(df_raw, nombres_minimos)
+
+        if fila_header is None:
+            st.error(
+                "❌ No se pudo detectar la fila de encabezados. "
+                "Verifica que tu archivo tenga columnas como `Riesgo` (o `Peligro`), "
+                "`Probabilidad`, `Consecuencia`, `Área`, `Responsable`, `Control` en alguna de las primeras filas."
+            )
+            st.write("Primeras filas detectadas:")
+            st.dataframe(df_raw.head(10), width=None)
             return
 
-    # Leer sin encabezados
-    if filename.lower().endswith(".csv"):
-        df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None)
-    else:
-        df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None)
+        header_row = df_raw.iloc[fila_header].astype(str).str.strip()
+        df = df_raw.iloc[fila_header + 1:].copy()
+        df.columns = header_row
+        df = df.reset_index(drop=True)
+        df.columns = df.columns.map(lambda x: str(x).strip())
 
-    nombres_minimos = ["Riesgo", "Peligro", "Probabilidad", "Consecuencia", "Área", "Area", "Responsable", "Control"]
-    fila_header = detectar_fila_encabezado(df_raw, nombres_minimos)
+        # Identificar columnas clave (insensible a mayúsculas/tildes)
+        col_riesgo = get_column(df, "Riesgo") or get_column(df, "Peligro")
+        col_prob = get_column(df, "Probabilidad")
+        col_cons = get_column(df, "Consecuencia")
+        col_nivel = get_column(df, "Nivel de Riesgo")
+        col_area = get_column(df, "Área") or get_column(df, "Area")
+        col_resp = get_column(df, "Responsable")
+        col_control = get_column(df, "Control")
+        col_obs = get_column(df, "Observaciones")
 
-    if fila_header is None:
-        st.error(
-            "❌ No se pudo detectar la fila de encabezados. "
-            "Verifica que tu archivo tenga columnas como `Riesgo` (o `Peligro`), "
-            "`Probabilidad`, `Consecuencia`, `Área`, `Responsable`, `Control` en alguna de las primeras filas."
-        )
-        st.write("Primeras filas detectadas:")
-        st.dataframe(df_raw.head(10), width='stretch')
-        return
+        col_proy = get_column(df, "Proyecto") or get_column(df, "Contrato") or get_column(df, "Proceso")
+        col_estado = get_column(df, "Estado")
+        col_criticidad = get_column(df, "Criticidad")
 
-    header_row = df_raw.iloc[fila_header].astype(str).str.strip()
-    df = df_raw.iloc[fila_header + 1:].copy()
-    df.columns = header_row
-    df = df.reset_index(drop=True)
-    df.columns = df.columns.map(lambda x: str(x).strip())
+        columnas_requeridas = [col_riesgo, col_prob, col_cons, col_area, col_resp, col_control]
 
-    # Identificar columnas clave
-    col_riesgo = get_column(df, "Riesgo") or get_column(df, "Peligro")
-    col_prob = get_column(df, "Probabilidad")
-    col_cons = get_column(df, "Consecuencia")
-    col_nivel = get_column(df, "Nivel de Riesgo")
-    col_area = get_column(df, "Área") or get_column(df, "Area")
-    col_resp = get_column(df, "Responsable")
-    col_control = get_column(df, "Control")
-    col_obs = get_column(df, "Observaciones")
+        if any(c is None for c in columnas_requeridas):
+            st.error(
+                "❌ Faltan columnas requeridas incluso después de detectar encabezados.\n\n"
+                "Verifica que existan estas columnas (respetando tildes y ortografía): "
+                "`Riesgo` o `Peligro`, `Probabilidad`, `Consecuencia`, `Área` o `Area`, `Responsable`, `Control`."
+            )
+            st.write("Columnas detectadas:", list(df.columns))
+            return
 
-    col_proy = get_column(df, "Proyecto") or get_column(df, "Contrato") or get_column(df, "Proceso")
-    col_estado = get_column(df, "Estado")
-    col_criticidad = get_column(df, "Criticidad")
+        # Asegurar numérico
+        df[col_prob] = pd.to_numeric(df[col_prob], errors="coerce")
+        df[col_cons] = pd.to_numeric(df[col_cons], errors="coerce")
 
-    columnas_requeridas = [col_riesgo, col_prob, col_cons, col_area, col_resp, col_control]
+        # Calcular nivel de riesgo y categoría
+        df, col_nivel = calcular_nivel_riesgo(df, col_prob, col_cons, col_nivel)
+        df["Categoría Riesgo"] = df[col_nivel].apply(categorizar_riesgo)
 
-    if any(c is None for c in columnas_requeridas):
-        st.error(
-            "❌ Faltan columnas requeridas incluso después de detectar encabezados.\n\n"
-            "Verifica que existan estas columnas (respetando tildes y ortografía): "
-            "`Riesgo` o `Peligro`, `Probabilidad`, `Consecuencia`, `Área` o `Area`, `Responsable`, `Control`."
-        )
-        st.write("Columnas detectadas:", list(df.columns))
-        return
+        # Fecha (si tiene)
+        col_fecha, df = detectar_columna_fecha(df)
 
-    # Asegurar numérico
-    df[col_prob] = pd.to_numeric(df[col_prob], errors="coerce")
-    df[col_cons] = pd.to_numeric(df[col_cons], errors="coerce")
+        fecha_vals = None
+        if col_fecha is not None:
+            try:
+                fecha_vals = pd.to_datetime(df[col_fecha], errors="coerce").dt.strftime("%Y-%m-%d")
+            except Exception:
+                fecha_vals = None
 
-    # Calcular nivel de riesgo y categoría
-    df, col_nivel = calcular_nivel_riesgo(df, col_prob, col_cons, col_nivel)
-    df["Categoría Riesgo"] = df[col_nivel].apply(categorizar_riesgo)
+        if col_obs is not None:
+            obs_vals = df[col_obs].fillna("").astype(str)
+        else:
+            obs_vals = ""
 
-    # Fecha (si tiene)
-    col_fecha, df = detectar_columna_fecha(df)
+        proy_vals = df[col_proy] if col_proy is not None else ""
+        estado_vals = df[col_estado] if col_estado is not None else "Identificado"
+        criticidad_vals = df[col_criticidad] if col_criticidad is not None else ""
 
-    fecha_vals = df[col_fecha] if col_fecha is not None else None
-    if fecha_vals is not None:
-        fecha_vals = fecha_vals.dt.strftime("%Y-%m-%d")
+        df_para_bd = pd.DataFrame({
+            "Riesgo": df[col_riesgo].fillna("").astype(str),
+            "Probabilidad": df[col_prob],
+            "Consecuencia": df[col_cons],
+            "Nivel de Riesgo": df[col_nivel],
+            "Categoría Riesgo": df["Categoría Riesgo"],
+            "Área": df[col_area].fillna("").astype(str),
+            "Responsable": df[col_resp].fillna("").astype(str),
+            "Control": df[col_control].fillna("").astype(str),
+            "Fecha": fecha_vals,
+            "Observaciones": obs_vals,
+            "Origen": "Archivo",
+            "FileHash": file_hash,
+            "Proyecto": proy_vals.fillna("").astype(str) if hasattr(proy_vals, "fillna") else proy_vals,
+            "Estado": estado_vals.fillna("").astype(str) if hasattr(estado_vals, "fillna") else estado_vals,
+            "Criticidad": criticidad_vals.fillna("").astype(str) if hasattr(criticidad_vals, "fillna") else criticidad_vals
+        })
 
-    if col_obs is not None:
-        obs_vals = df[col_obs]
-    else:
-        obs_vals = ""
-
-    proy_vals = df[col_proy] if col_proy is not None else ""
-    estado_vals = df[col_estado] if col_estado is not None else "Identificado"
-    criticidad_vals = df[col_criticidad] if col_criticidad is not None else ""
-
-    df_para_bd = pd.DataFrame({
-        "Riesgo": df[col_riesgo],
-        "Probabilidad": df[col_prob],
-        "Consecuencia": df[col_cons],
-        "Nivel de Riesgo": df[col_nivel],
-        "Categoría Riesgo": df["Categoría Riesgo"],
-        "Área": df[col_area],
-        "Responsable": df[col_resp],
-        "Control": df[col_control],
-        "Fecha": fecha_vals,
-        "Observaciones": obs_vals,
-        "Origen": "Archivo",
-        "FileHash": file_hash,
-        "Proyecto": proy_vals,
-        "Estado": estado_vals,
-        "Criticidad": criticidad_vals
-    })
-
-    insertar_df_en_bd(df_para_bd)
-    st.success("✅ Archivo integrado exitosamente a la base de datos global de riesgos.")
+        insertar_df_en_bd(df_para_bd)
+        st.success(f"✅ Archivo integrado exitosamente a la base de datos global de riesgos. Registros añadidos: {len(df_para_bd)}")
+    except Exception as e:
+        st.error("Ocurrió un error al procesar el archivo.")
+        st.exception(traceback.format_exc())
 
 
 # ======================
@@ -679,10 +713,10 @@ if vista == "Dashboard de la base de datos":
             filter_area = filter_resp = filter_cat = filter_origen = []
             search_text = ""
         else:
-            areas = sorted(bd_global["Área"].dropna().unique().tolist())
-            responsables = sorted(bd_global["Responsable"].dropna().unique().tolist())
-            categorias = sorted(bd_global["Categoría Riesgo"].dropna().unique().tolist())
-            origenes = sorted(bd_global["Origen"].dropna().unique().tolist())
+            areas = sorted([a for a in bd_global["Área"].dropna().unique().tolist() if a != ""])
+            responsables = sorted([r for r in bd_global["Responsable"].dropna().unique().tolist() if r != ""])
+            categorias = sorted([c for c in bd_global["Categoría Riesgo"].dropna().unique().tolist() if c != ""])
+            origenes = sorted([o for o in bd_global["Origen"].dropna().unique().tolist() if o != ""])
 
             filter_area = st.multiselect("Filtrar por Área", options=areas, default=areas)
             filter_resp = st.multiselect("Filtrar por Responsable", options=responsables, default=responsables)
@@ -730,7 +764,6 @@ if vista == "Dashboard de la base de datos":
 
         # --- Export directo de Riesgos Altos ---
         st.markdown("### 🚨 Exportar solo Riesgos Altos")
-
         df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
 
         if df_altos.empty:
@@ -743,22 +776,6 @@ if vista == "Dashboard de la base de datos":
                 file_name="matriz_riesgos_altos_filtrada.csv",
                 mime="text/csv"
             )
-
-        # Export directo de Riesgos Altos (sobre la BD global filtrada)
-        df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
-
-        st.markdown("### 🚨 Exportar solo Riesgos Altos")
-
-        if df_altos.empty:
-            st.info("No hay riesgos altos en el filtro actual.")
-        else:
-            csv_altos = df_altos.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                label="💾 Descargar solo Riesgos Altos (CSV)",
-                data=csv_altos,
-                file_name="matriz_riesgos_altos_filtrada.csv",
-                mime="text/csv"
-    )
 
 # ----------------------------------------
 # VISTA 2: FORMULARIO EN TIEMPO REAL
@@ -850,20 +867,25 @@ elif vista == "Formulario en tiempo real":
 
         st.markdown("### 📤 Exportar base de datos completa a Power BI / Excel")
         csv_bd = bd.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label="💾 Descargar BD completa (CSV)",
+            data=csv_bd,
+            file_name="matriz_riesgos_bd_completa.csv",
+            mime="text/csv"
+        )
 
-    # Export directo de Riesgos Altos (sobre el filtro aplicado)
-        df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
-
+        # Export directo de Riesgos Altos (sobre la BD completa)
         st.markdown("### 🚨 Exportar solo Riesgos Altos")
+        df_altos = bd[bd["Categoría Riesgo"] == "Alto"].copy()
 
         if df_altos.empty:
-            st.info("No hay riesgos altos en el filtro actual.")
+            st.info("No hay riesgos altos en la base de datos.")
         else:
             csv_altos = df_altos.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 label="💾 Descargar solo Riesgos Altos (CSV)",
                 data=csv_altos,
-                file_name="matriz_riesgos_altos_filtrada.csv",
+                file_name="matriz_riesgos_altos_bd.csv",
                 mime="text/csv"
             )
 
@@ -970,31 +992,35 @@ elif vista == "Gestión y actualización":
                 actualizar = st.form_submit_button("💾 Guardar cambios")
 
             if actualizar:
-                with get_connection() as conn:
-                    conn.execute(
-                        f"""
-                        UPDATE {TABLE_NAME}
-                        SET "Área" = ?,
-                            "Responsable" = ?,
-                            "Estado" = ?,
-                            "Criticidad" = ?,
-                            "Control" = ?,
-                            "Observaciones" = ?
-                        WHERE id = ?;
-                        """,
-                        (
-                            nueva_area,
-                            nuevo_responsable,
-                            nuevo_estado,
-                            nueva_criticidad,
-                            nuevo_control,
-                            nuevas_obs,
-                            int(riesgo_id)
+                try:
+                    with get_connection() as conn:
+                        conn.execute(
+                            f"""
+                            UPDATE {TABLE_NAME}
+                            SET "Área" = ?,
+                                "Responsable" = ?,
+                                "Estado" = ?,
+                                "Criticidad" = ?,
+                                "Control" = ?,
+                                "Observaciones" = ?
+                            WHERE id = ?;
+                            """,
+                            (
+                                nueva_area,
+                                nuevo_responsable,
+                                nuevo_estado,
+                                nueva_criticidad,
+                                nuevo_control,
+                                nuevas_obs,
+                                int(riesgo_id)
+                            )
                         )
-                    )
-                    conn.commit()
-                limpiar_cache_bd()
-                st.success("✅ Riesgo actualizado correctamente.")
+                        conn.commit()
+                    limpiar_cache_bd()
+                    st.success("✅ Riesgo actualizado correctamente.")
+                except Exception as e:
+                    st.error("Error al actualizar el riesgo.")
+                    st.exception(e)
 
 # ----------------------------------------
 # VISTA 4: PLANES DE TRATAMIENTO
@@ -1069,6 +1095,13 @@ else:  # vista == "Planes de tratamiento"
             st.markdown("---")
             st.markdown("### Planes registrados para este riesgo")
 
+            df_planes = cargar_planes()
+            df_planes_riesgo = df_planes[df_planes["riesgo_id"] == int(riesgo_id)]
+
+            if df_planes_riesgo.empty:
+                st.info("Este riesgo aún no tiene planes de tratamiento registrados.")
+            else:
+                st.dataframe(df_planes_riesgo, width=None, height=300)
             df_planes = cargar_planes()
             df_planes_riesgo = df_planes[df_planes["riesgo_id"] == int(riesgo_id)]
 
