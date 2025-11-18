@@ -451,49 +451,128 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
         else:
             st.write("Sin datos de categoría para mostrar.")
 
-    # 🔥 Matriz de calor Probabilidad x Consecuencia
+        # 🔥 Matriz de calor Probabilidad x Consecuencia (1–5)
     st.subheader(f"🧱 {titulo_prefix}Matriz de calor Probabilidad x Consecuencia")
+
     if "Probabilidad" in df.columns and "Consecuencia" in df.columns:
+        # Copia y normalización
         df_pc = df.copy()
         df_pc["Probabilidad"] = pd.to_numeric(df_pc["Probabilidad"], errors="coerce")
         df_pc["Consecuencia"] = pd.to_numeric(df_pc["Consecuencia"], errors="coerce")
         df_pc = df_pc.dropna(subset=["Probabilidad", "Consecuencia"])
 
-        if df_pc.empty:
-            st.info("No hay datos suficientes para construir la matriz de calor.")
-        else:
-            tabla = (
-                df_pc
-                .groupby(["Probabilidad", "Consecuencia"])
-                .size()
-                .reset_index(name="Total")
-            )
-            matriz = tabla.pivot(
-                index="Probabilidad",
-                columns="Consecuencia",
-                values="Total"
-            ).fillna(0)
+        # Rango estándar 1–5 en ambos ejes
+        probs = range(1, 6)
+        consec = range(1, 6)
 
-            matriz = matriz.sort_index().sort_index(axis=1)
+        # Matrices:
+        # - matriz_cat_val: 1 = Bajo, 2 = Medio, 3 = Alto (para color)
+        # - matriz_text: texto a mostrar en cada celda (P×C y nº de riesgos)
+        # - matriz_hover: texto detallado con nombres de riesgos
+        matriz_cat_val = []
+        matriz_text = []
+        matriz_hover = []
 
-            fig_heat = px.imshow(
-                matriz,
-                text_auto=True,
-                aspect="auto",
-                color_continuous_scale="Portland",
-                labels={"color": "N° riesgos"},
-                title=f"{titulo_prefix}Matriz de calor P x C"
+        cat_to_val = {"Bajo": 1, "Medio": 2, "Alto": 3}
+
+        for p in probs:
+            fila_cat = []
+            fila_text = []
+            fila_hover = []
+            for c in consec:
+                prod = int(p * c)
+                nivel = categorizar_riesgo(prod)  # Bajo / Medio / Alto según tu lógica
+
+                # Riesgos que caen exactamente en esta combinación P,C
+                riesgos_match = df_pc[
+                    (df_pc["Probabilidad"] == p) &
+                    (df_pc["Consecuencia"] == c)
+                ]
+
+                lista_riesgos = (
+                    riesgos_match.get("Riesgo", pd.Series([], dtype=str))
+                    .dropna()
+                    .astype(str)
+                    .tolist()
+                )
+
+                # Texto visible en la celda: "P×C (nR)" si hay riesgos, solo "P×C" si no
+                if lista_riesgos:
+                    cell_text = f"{prod} ({len(lista_riesgos)}R)"
+                    resumen = "; ".join(lista_riesgos[:3])
+                    if len(lista_riesgos) > 3:
+                        resumen += "..."
+                else:
+                    cell_text = f"{prod}"
+                    resumen = "Sin riesgos en esta combinación"
+
+                # Hover con detalle
+                hover_txt = (
+                    f"Probabilidad: {p}<br>"
+                    f"Consecuencia: {c}<br>"
+                    f"P × C: {prod}<br>"
+                    f"Nivel: {nivel}<br>"
+                    f"Riesgos: {resumen}"
+                )
+
+                fila_cat.append(cat_to_val.get(nivel, 0))
+                fila_text.append(cell_text)
+                fila_hover.append(hover_txt)
+
+            matriz_cat_val.append(fila_cat)
+            matriz_text.append(fila_text)
+            matriz_hover.append(fila_hover)
+
+        fig_heat = px.imshow(
+            matriz_cat_val,
+            x=list(consec),
+            y=list(probs),
+            aspect="auto",
+            labels={"x": "Consecuencia", "y": "Probabilidad", "color": "Nivel"},
+            title=f"{titulo_prefix}Matriz de calor P × C (1–5)"
+        )
+
+        # Colores: Bajo = verde, Medio = amarillo, Alto = rojo
+        colorscale = [
+            (0.0, "#1b5e20"),   # Bajo - verde
+            (1/3, "#1b5e20"),
+            (1/3 + 1e-6, "#FFD100"),  # Medio - amarillo
+            (2/3, "#FFD100"),
+            (2/3 + 1e-6, "#b71c1c"),  # Alto - rojo
+            (1.0, "#b71c1c"),
+        ]
+
+        fig_heat.update_traces(
+            text=matriz_text,
+            texttemplate="%{text}",
+            hovertext=matriz_hover,
+            hovertemplate="%{hovertext}<extra></extra>"
+        )
+
+        fig_heat.update_layout(
+            plot_bgcolor="#FFFFFF",
+            paper_bgcolor="#FFFFFF",
+            font_color="#000000",
+            xaxis_title="Consecuencia",
+            yaxis_title="Probabilidad",
+            coloraxis=dict(
+                colorscale=colorscale,
+                cmin=1,
+                cmax=3,
+                colorbar=dict(
+                    tickmode="array",
+                    tickvals=[1, 2, 3],
+                    ticktext=["Bajo", "Medio", "Alto"],
+                    title="Nivel de riesgo"
+                )
             )
-            fig_heat.update_layout(
-                plot_bgcolor="#FFFFFF",
-                paper_bgcolor="#FFFFFF",
-                font_color="#000000",
-                xaxis_title="Consecuencia",
-                yaxis_title="Probabilidad"
-            )
-            st.plotly_chart(fig_heat, use_container_width=True)
+        )
+
+        st.plotly_chart(fig_heat, width='stretch')
+
     else:
         st.info("La base no tiene columnas 'Probabilidad' y 'Consecuencia' para construir la matriz de calor.")
+
 
     # Tendencias en el tiempo usando columna Fecha
     if "Fecha" in df.columns and df["Fecha"].notna().any():
