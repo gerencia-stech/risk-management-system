@@ -480,7 +480,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
                 matriz,
                 text_auto=True,
                 aspect="auto",
-                color_continuous_scale="RdYLGn",
+                color_continuous_scale="Portland",
                 labels={"color": "N° riesgos"},
                 title=f"{titulo_prefix}Matriz de calor P x C"
             )
