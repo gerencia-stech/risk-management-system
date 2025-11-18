@@ -583,10 +583,11 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
             matriz_text.append(fila_text)
             matriz_hover.append(fila_hover)
 
-        fig_heat = px.imshow(
+               fig_heat = px.imshow(
             matriz_cat_val,
             x=list(consec),
             y=list(probs),
+            origin="lower",  # 👈 clave: hace que 1 quede en la esquina inferior izquierda
             aspect="auto",
             labels={"x": "Consecuencia", "y": "Probabilidad", "color": "Nivel"},
             title=f"{titulo_prefix}Matriz de calor P × C (1–5)"
@@ -628,7 +629,12 @@ def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
             )
         )
 
+        # Aseguramos que los ejes muestren 1–5 de forma clara
+        fig_heat.update_xaxes(type="linear", tickmode="array", tickvals=[1, 2, 3, 4, 5])
+        fig_heat.update_yaxes(type="linear", tickmode="array", tickvals=[1, 2, 3, 4, 5])
+
         st.plotly_chart(fig_heat, width='stretch')
+
 
     else:
         st.info("La base no tiene columnas 'Probabilidad' y 'Consecuencia' para construir la matriz de calor.")
