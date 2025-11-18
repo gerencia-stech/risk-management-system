@@ -5,8 +5,6 @@ from datetime import date
 import sqlite3
 import hashlib
 import io
-import traceback
-from typing import Optional, Tuple
 
 # ================================
 # CONFIGURACIÓN INICIAL DE LA APP
@@ -50,12 +48,7 @@ TABLE_NAME = "riesgos"
 # UTILIDADES DE BASE DE DATOS
 # ======================
 def get_connection():
-    """
-    Conexión a SQLite. check_same_thread=False para evitar errores con Streamlit y caching.
-    """
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return sqlite3.connect(DB_PATH)
 
 
 def init_db():
@@ -120,11 +113,73 @@ def init_db():
             );
         """)
 
+        # ==========================
+        # TABLAS DE CATÁLOGOS
+        # ==========================
+
+        # Catálogo de Riesgos (tipos genéricos de riesgo)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cat_riesgos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                descripcion TEXT,
+                activo INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Catálogo de Proyectos / Contratos / Procesos
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cat_proyectos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                codigo TEXT,
+                descripcion TEXT,
+                activo INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Catálogo de Áreas
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cat_areas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                descripcion TEXT,
+                activo INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Catálogo de Responsables
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cat_responsables (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                cargo TEXT,
+                correo TEXT,
+                activo INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Catálogo de Controles
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cat_controles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                descripcion TEXT,
+                tipo TEXT,
+                activo INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         conn.commit()
 
 
 @st.cache_data
-def cargar_bd() -> pd.DataFrame:
+def cargar_bd():
     """
     Carga TODA la base de datos de riesgos desde SQLite.
     Si no hay datos, retorna un DF vacío con la estructura estándar.
@@ -145,7 +200,6 @@ def cargar_bd() -> pd.DataFrame:
         df = df[columnas]
         return df
     except Exception:
-        # Si falla la lectura, devolver DF vacío con columnas
         return pd.DataFrame(columns=columnas)
 
 
@@ -155,19 +209,15 @@ def limpiar_cache_bd():
 
 def insertar_df_en_bd(df_bd: pd.DataFrame):
     """Inserta un DataFrame con las columnas de la matriz en la tabla riesgos."""
-    if df_bd is None or df_bd.empty:
+    if df_bd.empty:
         return
-    try:
-        with get_connection() as conn:
-            df_bd.to_sql(TABLE_NAME, conn, if_exists="append", index=False)
-            conn.commit()
-        limpiar_cache_bd()
-    except Exception as e:
-        st.error("Error al insertar registros en la base de datos.")
-        st.exception(e)
+    with get_connection() as conn:
+        df_bd.to_sql(TABLE_NAME, conn, if_exists="append", index=False)
+        conn.commit()
+    limpiar_cache_bd()
 
 
-def cargar_planes() -> pd.DataFrame:
+def cargar_planes():
     try:
         with get_connection() as conn:
             df = pd.read_sql("SELECT * FROM planes_tratamiento", conn)
@@ -181,27 +231,48 @@ def cargar_planes() -> pd.DataFrame:
 
 
 def insertar_plan(df_plan: pd.DataFrame):
-    if df_plan is None or df_plan.empty:
+    if df_plan.empty:
         return
+    with get_connection() as conn:
+        df_plan.to_sql("planes_tratamiento", conn, if_exists="append", index=False)
+        conn.commit()
+
+
+# ======================
+# UTILIDADES PARA CATÁLOGOS
+# ======================
+@st.cache_data
+def cargar_catalogo(nombre_tabla: str) -> pd.DataFrame:
     try:
         with get_connection() as conn:
-            df_plan.to_sql("planes_tratamiento", conn, if_exists="append", index=False)
-            conn.commit()
-    except Exception as e:
-        st.error("Error al insertar plan de tratamiento.")
-        st.exception(e)
+            df = pd.read_sql(f"SELECT * FROM {nombre_tabla}", conn)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def limpiar_cache_catalogos():
+    cargar_catalogo.clear()
+
+
+def insertar_en_catalogo(nombre_tabla: str, data: dict):
+    df = pd.DataFrame([data])
+    with get_connection() as conn:
+        df.to_sql(nombre_tabla, conn, if_exists="append", index=False)
+        conn.commit()
+    limpiar_cache_catalogos()
 
 
 # ======================
 # FUNCIONES AUXILIARES DE RIESGO
 # ======================
-def get_column(df: pd.DataFrame, target_name: str) -> Optional[str]:
+def get_column(df, target_name):
     """Devuelve el nombre real de la columna en el DataFrame, buscando por coincidencia en minúsculas."""
     cols_lower = {c.lower(): c for c in df.columns}
     return cols_lower.get(target_name.lower())
 
 
-def calcular_nivel_riesgo(df: pd.DataFrame, col_prob: str, col_cons: str, col_nivel: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
+def calcular_nivel_riesgo(df, col_prob, col_cons, col_nivel=None):
     """Calcula o recalcula el Nivel de Riesgo = Probabilidad x Consecuencia."""
     if col_nivel is None or col_nivel not in df.columns:
         df["Nivel de Riesgo"] = df[col_prob] * df[col_cons]
@@ -217,7 +288,6 @@ def categorizar_riesgo(valor):
       - Bajo: 1–7
       - Medio: 8–14
       - Alto: 15–25
-    Puedes ajustar estos rangos según tu metodología.
     """
     try:
         v = float(valor)
@@ -233,11 +303,12 @@ def categorizar_riesgo(valor):
         return "Sin dato"
 
 
-def detectar_columna_fecha(df: pd.DataFrame) -> Tuple[Optional[str], pd.DataFrame]:
+def detectar_columna_fecha(df):
     """Intenta detectar automáticamente una columna de fecha."""
-    # Preferencias por nombres
+    candidatos_preferidos = ["fecha", "fecha evento", "date", "fecha_riesgo"]
     cols_lower = {c.lower(): c for c in df.columns}
-    for cand in ["fecha", "fecha evento", "date", "fecha_riesgo", "fecha de riesgo"]:
+
+    for cand in candidatos_preferidos:
         if cand in cols_lower:
             col = cols_lower[cand]
             try:
@@ -247,23 +318,13 @@ def detectar_columna_fecha(df: pd.DataFrame) -> Tuple[Optional[str], pd.DataFram
             except Exception:
                 pass
 
-    # Buscar cualquier columna que contenga la palabra 'fecha'
-    for c in df.columns:
-        if "fecha" in c.lower():
-            try:
-                converted = pd.to_datetime(df[c], errors="coerce")
-                if converted.notna().sum() > 0:
-                    df[c] = converted
-                    return c, df
-            except Exception:
-                continue
-
-    # Columnas que ya son datetime
-    datetime_cols = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
+    datetime_cols = [
+        c for c in df.columns
+        if pd.api.types.is_datetime64_any_dtype(df[c])
+    ]
     if datetime_cols:
         return datetime_cols[0], df
 
-    # Intentar convertir columnas objeto
     for c in df.columns:
         if df[c].dtype == object:
             try:
@@ -277,7 +338,7 @@ def detectar_columna_fecha(df: pd.DataFrame) -> Tuple[Optional[str], pd.DataFram
     return None, df
 
 
-def detectar_fila_encabezado(df_raw: pd.DataFrame, nombres_minimos, max_filas_busqueda=15) -> Optional[int]:
+def detectar_fila_encabezado(df_raw, nombres_minimos, max_filas_busqueda=15):
     """
     Detecta la fila que parece ser el encabezado de la matriz,
     buscando al menos 3 coincidencias de nombres esperados.
@@ -293,17 +354,17 @@ def detectar_fila_encabezado(df_raw: pd.DataFrame, nombres_minimos, max_filas_bu
     return None
 
 
-def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_prefix: str = ""):
-    """KPIs + gráficos + tabla a partir de un DataFrame de riesgos."""
-    if df is None or df.empty:
+def calcular_kpis_y_graficos(df, col_area="Área", titulo_prefix=""):
+    """KPIs + gráficos + matriz P×C + tendencias + tabla a partir de un DataFrame de riesgos."""
+    if df.empty:
         st.info("No hay datos para mostrar aún.")
         return
 
     # KPIs
     total_riesgos = len(df)
-    total_alto = int((df["Categoría Riesgo"] == "Alto").sum())
-    total_medio = int((df["Categoría Riesgo"] == "Medio").sum())
-    total_bajo = int((df["Categoría Riesgo"] == "Bajo").sum())
+    total_alto = (df["Categoría Riesgo"] == "Alto").sum()
+    total_medio = (df["Categoría Riesgo"] == "Medio").sum()
+    total_bajo = (df["Categoría Riesgo"] == "Bajo").sum()
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -337,8 +398,8 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
                 border:1px solid #FFD10040;
                 text-align:center;
             ">
-                <div style="font-size:0.9rem;font-weight:600;color:#ffffff">Riesgos Altos</div>
-                <div style="font-size:1.8rem;font-weight:800;color:#ffffff">{total_alto}</div>
+                <div style="font-size:0.9rem;font-weight:600;">Riesgos Altos</div>
+                <div style="font-size:1.8rem;font-weight:800;">{total_alto}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -414,7 +475,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
                 xaxis_title="Área",
                 yaxis_title="Número de riesgos"
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, width='stretch')
         else:
             st.write("Sin datos de Área para mostrar.")
 
@@ -447,11 +508,11 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
                 paper_bgcolor="#FFFFFF",
                 font_color="#000000",
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width='stretch')
         else:
             st.write("Sin datos de categoría para mostrar.")
 
-        # 🔥 Matriz de calor Probabilidad x Consecuencia (1–5)
+    # 🔥 Matriz de calor Probabilidad x Consecuencia (1–5) con riesgos por celda
     st.subheader(f"🧱 {titulo_prefix}Matriz de calor Probabilidad x Consecuencia")
 
     if "Probabilidad" in df.columns and "Consecuencia" in df.columns:
@@ -462,8 +523,8 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
         df_pc = df_pc.dropna(subset=["Probabilidad", "Consecuencia"])
 
         # Rango estándar 1–5 en ambos ejes
-        probs = range(5, 1)
-        consec = range(1, 5)
+        probs = range(1, 6)
+        consec = range(1, 6)
 
         # Matrices:
         # - matriz_cat_val: 1 = Bajo, 2 = Medio, 3 = Alto (para color)
@@ -481,7 +542,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
             fila_hover = []
             for c in consec:
                 prod = int(p * c)
-                nivel = categorizar_riesgo(prod)  # Bajo / Medio / Alto según tu lógica
+                nivel = categorizar_riesgo(prod)  # Bajo / Medio / Alto
 
                 # Riesgos que caen exactamente en esta combinación P,C
                 riesgos_match = df_pc[
@@ -506,7 +567,6 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
                     cell_text = f"{prod}"
                     resumen = "Sin riesgos en esta combinación"
 
-                # Hover con detalle
                 hover_txt = (
                     f"Probabilidad: {p}<br>"
                     f"Consecuencia: {c}<br>"
@@ -573,7 +633,6 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
     else:
         st.info("La base no tiene columnas 'Probabilidad' y 'Consecuencia' para construir la matriz de calor.")
 
-
     # Tendencias en el tiempo usando columna Fecha
     if "Fecha" in df.columns and df["Fecha"].notna().any():
         df_fecha = df.copy()
@@ -603,7 +662,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
                     xaxis_title="Fecha",
                     yaxis_title="Número de riesgos"
                 )
-                st.plotly_chart(fig_line, use_container_width=True)
+                st.plotly_chart(fig_line, width='stretch')
         except Exception:
             st.info("No fue posible procesar la columna Fecha para tendencias.")
     else:
@@ -613,7 +672,7 @@ def calcular_kpis_y_graficos(df: pd.DataFrame, col_area: str = "Área", titulo_p
 
     # Tabla
     st.subheader(f"📋 {titulo_prefix}Tabla de riesgos")
-    st.dataframe(df, width='content', height=400)
+    st.dataframe(df, width='stretch', height=400)
 
 
 def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
@@ -621,118 +680,110 @@ def integrar_archivo_a_bd(file_bytes: bytes, filename: str):
     Lee un archivo (Excel/CSV), detecta encabezados, normaliza columnas
     y lo integra como registros en la base de datos global.
     Acepta encabezado 'Riesgo' o 'Peligro', pero lo mapea a 'Riesgo'.
-    Muestra mensajes claros al usuario y previene duplicados por hash.
     """
-    try:
-        file_hash = hashlib.md5(file_bytes).hexdigest()
+    file_hash = hashlib.md5(file_bytes).hexdigest()
 
-        # Verificar si ese hash ya existe en la BD
-        df_bd = cargar_bd()
-        if "FileHash" in df_bd.columns and not df_bd.empty:
-            if file_hash in df_bd["FileHash"].dropna().unique().tolist():
-                st.info("Este archivo ya fue integrado previamente a la base de datos global.")
-                return
-
-        # Leer sin encabezados
-        if filename.lower().endswith(".csv"):
-            df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
-        else:
-            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str)
-
-        nombres_minimos = ["Riesgo", "Peligro", "Probabilidad", "Consecuencia", "Área", "Area", "Responsable", "Control"]
-        fila_header = detectar_fila_encabezado(df_raw, nombres_minimos)
-
-        if fila_header is None:
-            st.error(
-                "❌ No se pudo detectar la fila de encabezados. "
-                "Verifica que tu archivo tenga columnas como `Riesgo` (o `Peligro`), "
-                "`Probabilidad`, `Consecuencia`, `Área`, `Responsable`, `Control` en alguna de las primeras filas."
-            )
-            st.write("Primeras filas detectadas:")
-            st.dataframe(df_raw.head(10), width=None)
+    # Verificar si ese hash ya existe en la BD
+    df_bd = cargar_bd()
+    if "FileHash" in df_bd.columns and not df_bd.empty:
+        if file_hash in df_bd["FileHash"].dropna().unique().tolist():
+            st.info("Este archivo ya fue integrado previamente a la base de datos global.")
             return
 
-        header_row = df_raw.iloc[fila_header].astype(str).str.strip()
-        df = df_raw.iloc[fila_header + 1:].copy()
-        df.columns = header_row
-        df = df.reset_index(drop=True)
-        df.columns = df.columns.map(lambda x: str(x).strip())
+    # Leer sin encabezados
+    if filename.lower().endswith(".csv"):
+        df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None)
+    else:
+        df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None)
 
-        # Identificar columnas clave (insensible a mayúsculas/tildes)
-        col_riesgo = get_column(df, "Riesgo") or get_column(df, "Peligro")
-        col_prob = get_column(df, "Probabilidad")
-        col_cons = get_column(df, "Consecuencia")
-        col_nivel = get_column(df, "Nivel de Riesgo")
-        col_area = get_column(df, "Área") or get_column(df, "Area")
-        col_resp = get_column(df, "Responsable")
-        col_control = get_column(df, "Control")
-        col_obs = get_column(df, "Observaciones")
+    nombres_minimos = ["Riesgo", "Peligro", "Probabilidad", "Consecuencia", "Área", "Area", "Responsable", "Control"]
+    fila_header = detectar_fila_encabezado(df_raw, nombres_minimos)
 
-        col_proy = get_column(df, "Proyecto") or get_column(df, "Contrato") or get_column(df, "Proceso")
-        col_estado = get_column(df, "Estado")
-        col_criticidad = get_column(df, "Criticidad")
+    if fila_header is None:
+        st.error(
+            "❌ No se pudo detectar la fila de encabezados. "
+            "Verifica que tu archivo tenga columnas como `Riesgo` (o `Peligro`), "
+            "`Probabilidad`, `Consecuencia`, `Área`, `Responsable`, `Control` en alguna de las primeras filas."
+        )
+        st.write("Primeras filas detectadas:")
+        st.dataframe(df_raw.head(10), width='stretch')
+        return
 
-        columnas_requeridas = [col_riesgo, col_prob, col_cons, col_area, col_resp, col_control]
+    header_row = df_raw.iloc[fila_header].astype(str).str.strip()
+    df = df_raw.iloc[fila_header + 1:].copy()
+    df.columns = header_row
+    df = df.reset_index(drop=True)
+    df.columns = df.columns.map(lambda x: str(x).strip())
 
-        if any(c is None for c in columnas_requeridas):
-            st.error(
-                "❌ Faltan columnas requeridas incluso después de detectar encabezados.\n\n"
-                "Verifica que existan estas columnas (respetando tildes y ortografía): "
-                "`Riesgo` o `Peligro`, `Probabilidad`, `Consecuencia`, `Área` o `Area`, `Responsable`, `Control`."
-            )
-            st.write("Columnas detectadas:", list(df.columns))
-            return
+    # Identificar columnas clave
+    col_riesgo = get_column(df, "Riesgo") or get_column(df, "Peligro")
+    col_prob = get_column(df, "Probabilidad")
+    col_cons = get_column(df, "Consecuencia")
+    col_nivel = get_column(df, "Nivel de Riesgo")
+    col_area = get_column(df, "Área") or get_column(df, "Area")
+    col_resp = get_column(df, "Responsable")
+    col_control = get_column(df, "Control")
+    col_obs = get_column(df, "Observaciones")
 
-        # Asegurar numérico
-        df[col_prob] = pd.to_numeric(df[col_prob], errors="coerce")
-        df[col_cons] = pd.to_numeric(df[col_cons], errors="coerce")
+    col_proy = get_column(df, "Proyecto") or get_column(df, "Contrato") or get_column(df, "Proceso")
+    col_estado = get_column(df, "Estado")
+    col_criticidad = get_column(df, "Criticidad")
 
-        # Calcular nivel de riesgo y categoría
-        df, col_nivel = calcular_nivel_riesgo(df, col_prob, col_cons, col_nivel)
-        df["Categoría Riesgo"] = df[col_nivel].apply(categorizar_riesgo)
+    columnas_requeridas = [col_riesgo, col_prob, col_cons, col_area, col_resp, col_control]
 
-        # Fecha (si tiene)
-        col_fecha, df = detectar_columna_fecha(df)
+    if any(c is None for c in columnas_requeridas):
+        st.error(
+            "❌ Faltan columnas requeridas incluso después de detectar encabezados.\n\n"
+            "Verifica que existan estas columnas (respetando tildes y ortografía): "
+            "`Riesgo` o `Peligro`, `Probabilidad`, `Consecuencia`, `Área` o `Area`, `Responsable`, `Control`."
+        )
+        st.write("Columnas detectadas:", list(df.columns))
+        return
 
-        fecha_vals = None
-        if col_fecha is not None:
-            try:
-                fecha_vals = pd.to_datetime(df[col_fecha], errors="coerce").dt.strftime("%Y-%m-%d")
-            except Exception:
-                fecha_vals = None
+    # Asegurar numérico
+    df[col_prob] = pd.to_numeric(df[col_prob], errors="coerce")
+    df[col_cons] = pd.to_numeric(df[col_cons], errors="coerce")
 
-        if col_obs is not None:
-            obs_vals = df[col_obs].fillna("").astype(str)
-        else:
-            obs_vals = ""
+    # Calcular nivel de riesgo y categoría
+    df, col_nivel = calcular_nivel_riesgo(df, col_prob, col_cons, col_nivel)
+    df["Categoría Riesgo"] = df[col_nivel].apply(categorizar_riesgo)
 
-        proy_vals = df[col_proy] if col_proy is not None else ""
-        estado_vals = df[col_estado] if col_estado is not None else "Identificado"
-        criticidad_vals = df[col_criticidad] if col_criticidad is not None else ""
+    # Fecha (si tiene)
+    col_fecha, df = detectar_columna_fecha(df)
 
-        df_para_bd = pd.DataFrame({
-            "Riesgo": df[col_riesgo].fillna("").astype(str),
-            "Probabilidad": df[col_prob],
-            "Consecuencia": df[col_cons],
-            "Nivel de Riesgo": df[col_nivel],
-            "Categoría Riesgo": df["Categoría Riesgo"],
-            "Área": df[col_area].fillna("").astype(str),
-            "Responsable": df[col_resp].fillna("").astype(str),
-            "Control": df[col_control].fillna("").astype(str),
-            "Fecha": fecha_vals,
-            "Observaciones": obs_vals,
-            "Origen": "Archivo",
-            "FileHash": file_hash,
-            "Proyecto": proy_vals.fillna("").astype(str) if hasattr(proy_vals, "fillna") else proy_vals,
-            "Estado": estado_vals.fillna("").astype(str) if hasattr(estado_vals, "fillna") else estado_vals,
-            "Criticidad": criticidad_vals.fillna("").astype(str) if hasattr(criticidad_vals, "fillna") else criticidad_vals
-        })
+    fecha_vals = df[col_fecha] if col_fecha is not None else None
+    if fecha_vals is not None:
+        fecha_vals = fecha_vals.dt.strftime("%Y-%m-%d")
 
-        insertar_df_en_bd(df_para_bd)
-        st.success(f"✅ Archivo integrado exitosamente a la base de datos global de riesgos. Registros añadidos: {len(df_para_bd)}")
-    except Exception as e:
-        st.error("Ocurrió un error al procesar el archivo.")
-        st.exception(traceback.format_exc())
+    if col_obs is not None:
+        obs_vals = df[col_obs]
+    else:
+        obs_vals = ""
+
+    proy_vals = df[col_proy] if col_proy is not None else ""
+    estado_vals = df[col_estado] if col_estado is not None else "Identificado"
+    criticidad_vals = df[col_criticidad] if col_criticidad is not None else ""
+
+    df_para_bd = pd.DataFrame({
+        "Riesgo": df[col_riesgo],
+        "Probabilidad": df[col_prob],
+        "Consecuencia": df[col_cons],
+        "Nivel de Riesgo": df[col_nivel],
+        "Categoría Riesgo": df["Categoría Riesgo"],
+        "Área": df[col_area],
+        "Responsable": df[col_resp],
+        "Control": df[col_control],
+        "Fecha": fecha_vals,
+        "Observaciones": obs_vals,
+        "Origen": "Archivo",
+        "FileHash": file_hash,
+        "Proyecto": proy_vals,
+        "Estado": estado_vals,
+        "Criticidad": criticidad_vals
+    })
+
+    insertar_df_en_bd(df_para_bd)
+    st.success("✅ Archivo integrado exitosamente a la base de datos global de riesgos.")
 
 
 # ======================
@@ -744,10 +795,13 @@ with st.sidebar:
     st.markdown("## ⚙️ Navegación")
     vista = st.radio(
         "Selecciona la vista:",
-        ["Dashboard de la base de datos",
-         "Formulario en tiempo real",
-         "Gestión y actualización",
-         "Planes de tratamiento"],
+        [
+            "Dashboard de la base de datos",
+            "Formulario en tiempo real",
+            "Gestión y actualización",
+            "Planes de tratamiento",
+            "Administración de catálogos"
+        ],
         index=0
     )
 
@@ -761,7 +815,7 @@ if vista == "Dashboard de la base de datos":
         "Los archivos y el formulario solo alimentan esta base; todo lo que ves aquí viene de la BD global."
     )
 
-    # --- Carga de archivo e integración a la BD global (no visualización directa) ---
+    # Carga de archivo e integración
     with st.sidebar:
         st.markdown("---")
         st.header("📂 Carga e integración de archivo")
@@ -781,7 +835,7 @@ if vista == "Dashboard de la base de datos":
         file_bytes = uploaded_file.getvalue()
         integrar_archivo_a_bd(file_bytes, uploaded_file.name)
 
-    # --- SIEMPRE trabajamos sobre la base de datos global ---
+    # Filtros y analítica sobre BD global
     bd_global = cargar_bd()
 
     with st.sidebar:
@@ -792,10 +846,10 @@ if vista == "Dashboard de la base de datos":
             filter_area = filter_resp = filter_cat = filter_origen = []
             search_text = ""
         else:
-            areas = sorted([a for a in bd_global["Área"].dropna().unique().tolist() if a != ""])
-            responsables = sorted([r for r in bd_global["Responsable"].dropna().unique().tolist() if r != ""])
-            categorias = sorted([c for c in bd_global["Categoría Riesgo"].dropna().unique().tolist() if c != ""])
-            origenes = sorted([o for o in bd_global["Origen"].dropna().unique().tolist() if o != ""])
+            areas = sorted(bd_global["Área"].dropna().unique().tolist())
+            responsables = sorted(bd_global["Responsable"].dropna().unique().tolist())
+            categorias = sorted(bd_global["Categoría Riesgo"].dropna().unique().tolist())
+            origenes = sorted(bd_global["Origen"].dropna().unique().tolist())
 
             filter_area = st.multiselect("Filtrar por Área", options=areas, default=areas)
             filter_resp = st.multiselect("Filtrar por Responsable", options=responsables, default=responsables)
@@ -808,7 +862,6 @@ if vista == "Dashboard de la base de datos":
     if bd_global.empty:
         st.info("No hay registros aún. Carga un archivo o registra riesgos en el formulario.")
     else:
-        # Partimos SIEMPRE de la BD global
         df_filtrado = bd_global.copy()
 
         # Filtros
@@ -828,10 +881,10 @@ if vista == "Dashboard de la base de datos":
             )
             df_filtrado = df_filtrado[mask]
 
-        # 🎯 DASHBOARD sobre df_filtrado (BD global filtrada)
+        # Dashboard sobre BD global filtrada
         calcular_kpis_y_graficos(df_filtrado, col_area="Área", titulo_prefix="BD Global - ")
 
-        # --- Export general ---
+        # Export general
         st.markdown("### 📤 Exportar datos filtrados para Power BI / Excel")
         csv_data = df_filtrado.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
@@ -841,7 +894,7 @@ if vista == "Dashboard de la base de datos":
             mime="text/csv"
         )
 
-        # --- Export directo de Riesgos Altos ---
+        # Export directo de Riesgos Altos
         st.markdown("### 🚨 Exportar solo Riesgos Altos")
         df_altos = df_filtrado[df_filtrado["Categoría Riesgo"] == "Alto"].copy()
 
@@ -947,26 +1000,11 @@ elif vista == "Formulario en tiempo real":
         st.markdown("### 📤 Exportar base de datos completa a Power BI / Excel")
         csv_bd = bd.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
-            label="💾 Descargar BD completa (CSV)",
+            label="💾 Descargar base de datos completa CSV",
             data=csv_bd,
-            file_name="matriz_riesgos_bd_completa.csv",
+            file_name="matriz_riesgos_bd_global.csv",
             mime="text/csv"
         )
-
-        # Export directo de Riesgos Altos (sobre la BD completa)
-        st.markdown("### 🚨 Exportar solo Riesgos Altos")
-        df_altos = bd[bd["Categoría Riesgo"] == "Alto"].copy()
-
-        if df_altos.empty:
-            st.info("No hay riesgos altos en la base de datos.")
-        else:
-            csv_altos = df_altos.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                label="💾 Descargar solo Riesgos Altos (CSV)",
-                data=csv_altos,
-                file_name="matriz_riesgos_altos_bd.csv",
-                mime="text/csv"
-            )
 
 # ----------------------------------------
 # VISTA 3: GESTIÓN Y ACTUALIZACIÓN
@@ -1071,40 +1109,36 @@ elif vista == "Gestión y actualización":
                 actualizar = st.form_submit_button("💾 Guardar cambios")
 
             if actualizar:
-                try:
-                    with get_connection() as conn:
-                        conn.execute(
-                            f"""
-                            UPDATE {TABLE_NAME}
-                            SET "Área" = ?,
-                                "Responsable" = ?,
-                                "Estado" = ?,
-                                "Criticidad" = ?,
-                                "Control" = ?,
-                                "Observaciones" = ?
-                            WHERE id = ?;
-                            """,
-                            (
-                                nueva_area,
-                                nuevo_responsable,
-                                nuevo_estado,
-                                nueva_criticidad,
-                                nuevo_control,
-                                nuevas_obs,
-                                int(riesgo_id)
-                            )
+                with get_connection() as conn:
+                    conn.execute(
+                        f"""
+                        UPDATE {TABLE_NAME}
+                        SET "Área" = ?,
+                            "Responsable" = ?,
+                            "Estado" = ?,
+                            "Criticidad" = ?,
+                            "Control" = ?,
+                            "Observaciones" = ?
+                        WHERE id = ?;
+                        """,
+                        (
+                            nueva_area,
+                            nuevo_responsable,
+                            nuevo_estado,
+                            nueva_criticidad,
+                            nuevo_control,
+                            nuevas_obs,
+                            int(riesgo_id)
                         )
-                        conn.commit()
-                    limpiar_cache_bd()
-                    st.success("✅ Riesgo actualizado correctamente.")
-                except Exception as e:
-                    st.error("Error al actualizar el riesgo.")
-                    st.exception(e)
+                    )
+                    conn.commit()
+                limpiar_cache_bd()
+                st.success("✅ Riesgo actualizado correctamente.")
 
 # ----------------------------------------
 # VISTA 4: PLANES DE TRATAMIENTO
 # ----------------------------------------
-else:  # vista == "Planes de tratamiento"
+elif vista == "Planes de tratamiento":
     st.title("🛡 Planes de tratamiento de riesgos")
     st.caption("Define, asigna y monitorea acciones de tratamiento para cada riesgo.")
 
@@ -1180,12 +1214,190 @@ else:  # vista == "Planes de tratamiento"
             if df_planes_riesgo.empty:
                 st.info("Este riesgo aún no tiene planes de tratamiento registrados.")
             else:
-                st.dataframe(df_planes_riesgo, width=None, height=300)
-            df_planes = cargar_planes()
-            df_planes_riesgo = df_planes[df_planes["riesgo_id"] == int(riesgo_id)]
-
-            if df_planes_riesgo.empty:
-                st.info("Este riesgo aún no tiene planes de tratamiento registrados.")
-            else:
                 st.dataframe(df_planes_riesgo, width='stretch', height=300)
 
+# ----------------------------------------
+# VISTA 5: ADMINISTRACIÓN DE CATÁLOGOS
+# ----------------------------------------
+elif vista == "Administración de catálogos":
+    st.title("🧩 Administración de catálogos")
+    st.caption("Configura los maestros de datos que alimentan tu Risk Management System.")
+
+    tabs = st.tabs([
+        "Catálogo de Riesgos",
+        "Proyectos / Contratos / Procesos",
+        "Áreas",
+        "Responsables",
+        "Controles"
+    ])
+
+    # 1) Catálogo de Riesgos
+    with tabs[0]:
+        st.subheader("📌 Catálogo de Riesgos")
+
+        with st.form("form_cat_riesgos"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nombre = st.text_input("Nombre del riesgo (tipo)", "")
+            with col2:
+                descripcion = st.text_area("Descripción del riesgo", "", height=80)
+
+            submitted = st.form_submit_button("✅ Guardar riesgo en catálogo")
+
+        if submitted:
+            if nombre.strip() == "":
+                st.warning("El nombre del riesgo no puede estar vacío.")
+            else:
+                try:
+                    insertar_en_catalogo("cat_riesgos", {
+                        "nombre": nombre.strip(),
+                        "descripcion": descripcion.strip()
+                    })
+                    st.success("✅ Riesgo agregado al catálogo.")
+                except Exception as e:
+                    st.error(f"No se pudo guardar el riesgo. Detalle: {e}")
+
+        st.markdown("### 📋 Riesgos en catálogo")
+        df_cat = cargar_catalogo("cat_riesgos")
+        if df_cat.empty:
+            st.info("Aún no hay riesgos en el catálogo.")
+        else:
+            st.dataframe(df_cat, width='stretch', height=300)
+
+    # 2) Proyectos / Contratos / Procesos
+    with tabs[1]:
+        st.subheader("🗂 Proyectos / Contratos / Procesos")
+
+        with st.form("form_cat_proyectos"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nombre = st.text_input("Nombre del proyecto / contrato / proceso", "")
+                codigo = st.text_input("Código / identificador", "")
+            with col2:
+                descripcion = st.text_area("Descripción", "", height=80)
+
+            submitted = st.form_submit_button("✅ Guardar proyecto en catálogo")
+
+        if submitted:
+            if nombre.strip() == "":
+                st.warning("El nombre no puede estar vacío.")
+            else:
+                try:
+                    insertar_en_catalogo("cat_proyectos", {
+                        "nombre": nombre.strip(),
+                        "codigo": codigo.strip(),
+                        "descripcion": descripcion.strip()
+                    })
+                    st.success("✅ Proyecto/contrato/proceso agregado al catálogo.")
+                except Exception as e:
+                    st.error(f"No se pudo guardar el registro. Detalle: {e}")
+
+        st.markdown("### 📋 Proyectos / Contratos / Procesos en catálogo")
+        df_cat = cargar_catalogo("cat_proyectos")
+        if df_cat.empty:
+            st.info("Aún no hay registros en el catálogo.")
+        else:
+            st.dataframe(df_cat, width='stretch', height=300)
+
+    # 3) Áreas
+    with tabs[2]:
+        st.subheader("🏢 Áreas")
+
+        with st.form("form_cat_areas"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nombre = st.text_input("Nombre del área", "")
+            with col2:
+                descripcion = st.text_area("Descripción del área", "", height=80)
+
+            submitted = st.form_submit_button("✅ Guardar área en catálogo")
+
+        if submitted:
+            if nombre.strip() == "":
+                st.warning("El nombre del área no puede estar vacío.")
+            else:
+                try:
+                    insertar_en_catalogo("cat_areas", {
+                        "nombre": nombre.strip(),
+                        "descripcion": descripcion.strip()
+                    })
+                    st.success("✅ Área agregada al catálogo.")
+                except Exception as e:
+                    st.error(f"No se pudo guardar el área. Detalle: {e}")
+
+        st.markdown("### 📋 Áreas en catálogo")
+        df_cat = cargar_catalogo("cat_areas")
+        if df_cat.empty:
+            st.info("Aún no hay áreas en el catálogo.")
+        else:
+            st.dataframe(df_cat, width='stretch', height=300)
+
+    # 4) Responsables
+    with tabs[3]:
+        st.subheader("👤 Responsables")
+
+        with st.form("form_cat_responsables"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nombre = st.text_input("Nombre del responsable", "")
+                cargo = st.text_input("Cargo", "")
+            with col2:
+                correo = st.text_input("Correo electrónico", "")
+
+            submitted = st.form_submit_button("✅ Guardar responsable en catálogo")
+
+        if submitted:
+            if nombre.strip() == "":
+                st.warning("El nombre del responsable no puede estar vacío.")
+            else:
+                try:
+                    insertar_en_catalogo("cat_responsables", {
+                        "nombre": nombre.strip(),
+                        "cargo": cargo.strip(),
+                        "correo": correo.strip()
+                    })
+                    st.success("✅ Responsable agregado al catálogo.")
+                except Exception as e:
+                    st.error(f"No se pudo guardar el responsable. Detalle: {e}")
+
+        st.markdown("### 📋 Responsables en catálogo")
+        df_cat = cargar_catalogo("cat_responsables")
+        if df_cat.empty:
+            st.info("Aún no hay responsables en el catálogo.")
+        else:
+            st.dataframe(df_cat, width='stretch', height=300)
+
+    # 5) Controles
+    with tabs[4]:
+        st.subheader("🛡 Controles")
+
+        with st.form("form_cat_controles"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nombre = st.text_input("Nombre del control", "")
+                tipo = st.text_input("Tipo de control (preventivo, detectivo, correctivo, etc.)", "")
+            with col2:
+                descripcion = st.text_area("Descripción del control", "", height=80)
+
+            submitted = st.form_submit_button("✅ Guardar control en catálogo")
+
+        if submitted:
+            if nombre.strip() == "":
+                st.warning("El nombre del control no puede estar vacío.")
+            else:
+                try:
+                    insertar_en_catalogo("cat_controles", {
+                        "nombre": nombre.strip(),
+                        "descripcion": descripcion.strip(),
+                        "tipo": tipo.strip()
+                    })
+                    st.success("✅ Control agregado al catálogo.")
+                except Exception as e:
+                    st.error(f"No se pudo guardar el control. Detalle: {e}")
+
+        st.markdown("### 📋 Controles en catálogo")
+        df_cat = cargar_catalogo("cat_controles")
+        if df_cat.empty:
+            st.info("Aún no hay controles en el catálogo.")
+        else:
+            st.dataframe(df_cat, width='stretch', height=300)
